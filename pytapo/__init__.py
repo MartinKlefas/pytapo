@@ -1434,7 +1434,7 @@ class Tapo:
         return result["playback"]["search_results"]
 
     def getRecordingsUTC(
-        self, start_time, end_time, start_index=0, end_index=999999999, retry=False
+        self, start_time, end_time, start_index=0, end_index=100, retry=False
     ):
         try:
             result = self.executeFunction(
@@ -1456,7 +1456,35 @@ class Tapo:
             if "playback" not in result:
                 raise Exception("Video playback is not supported by this camera")
 
-            return result["playback"]["search_video_results"]
+            # Camera firmware varies: C310 returns 'search_results', others use
+            # 'search_video_results'.  Normalise to a flat list of segment dicts
+            # with consistent startTime/endTime keys regardless of firmware.
+            playback = result["playback"]
+            raw = (
+                playback.get("search_video_results")
+                or playback.get("search_results")
+                or []
+            )
+            clips = []
+            for entry in raw:
+                if not isinstance(entry, dict):
+                    continue
+                # Flat dict: {"startTime": ..., "endTime": ...}
+                if "startTime" in entry:
+                    clips.append(entry)
+                    continue
+                if "start_time" in entry:
+                    clips.append({"startTime": entry["start_time"], "endTime": entry["end_time"]})
+                    continue
+                # Wrapper dict: {"search_results_N": {"startTime": ..., "endTime": ...}}
+                for v in entry.values():
+                    if isinstance(v, dict):
+                        if "startTime" in v:
+                            clips.append(v)
+                        elif "start_time" in v:
+                            clips.append({"startTime": v["start_time"], "endTime": v["end_time"]})
+                        break
+            return clips
         except Exception as err:
             self.logger.debugLog(
                 f"Encountered error when getting recordings time {start_time} - {end_time}: {err}"
@@ -1475,7 +1503,7 @@ class Tapo:
             else:
                 raise err
 
-    def getRecordings(self, date, start_index=0, end_index=999999999, retry=False):
+    def getRecordings(self, date, start_index=0, end_index=100, retry=False):
         if self.childID is not None:
             date_object = datetime.strptime(date, "%Y%m%d")
             start_time = int(date_object.timestamp())

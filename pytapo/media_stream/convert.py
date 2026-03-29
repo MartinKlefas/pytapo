@@ -45,25 +45,51 @@ class Convert:
             tempVideoFileLocation = fileLocation + ".ts"
             async with aiofiles.open(tempVideoFileLocation, "wb") as file:
                 await file.write(self.writer.getvalue())
-            audio_format = self._get_audio_format()
-            audio_rate = self._get_audio_rate()
-            tempAudioFileLocation = f"{fileLocation}.{audio_format}"
-            async with aiofiles.open(tempAudioFileLocation, "wb") as file:
-                await file.write(self.audioWriter.getvalue())
 
-            cmd = 'ffmpeg -ss 00:00:00 -i "{inputVideoFile}" -f {audioFormat} -ar {audioRate} -i "{inputAudioFile}" -t {videoLength} -y -c:v copy -c:a aac -map 0:v:0 -map 1:a:0 "{outputFile}" >{devnull} 2>&1'.format(
-                inputVideoFile=tempVideoFileLocation,
-                inputAudioFile=tempAudioFileLocation,
-                outputFile=fileLocation,
-                videoLength=str(datetime.timedelta(seconds=fileLength)),
-                devnull=os.devnull,
-                audioFormat=audio_format,
-                audioRate=audio_rate,
-            )
-            os.system(cmd)
+            audio_data = self.audioWriter.getvalue()
+            has_audio = bool(audio_data)
+
+            if has_audio:
+                # Camera provided audio: mux video + audio together.
+                audio_format = self._get_audio_format()
+                audio_rate = self._get_audio_rate()
+                tempAudioFileLocation = f"{fileLocation}.{audio_format}"
+                async with aiofiles.open(tempAudioFileLocation, "wb") as file:
+                    await file.write(audio_data)
+
+                cmd = [
+                    "ffmpeg", "-ss", "00:00:00",
+                    "-i", tempVideoFileLocation,
+                    "-f", audio_format, "-ar", str(audio_rate),
+                    "-i", tempAudioFileLocation,
+                    "-t", str(datetime.timedelta(seconds=fileLength)),
+                    "-y", "-c:v", "copy", "-c:a", "aac",
+                    "-map", "0:v:0", "-map", "1:a:0",
+                    fileLocation,
+                ]
+            else:
+                # No audio data (camera does not provide audio, or audio is malformed).
+                # Extract video stream only to avoid ffmpeg failing on empty audio input.
+                tempAudioFileLocation = None
+                cmd = [
+                    "ffmpeg", "-ss", "00:00:00",
+                    "-i", tempVideoFileLocation,
+                    "-t", str(datetime.timedelta(seconds=fileLength)),
+                    "-y", "-c:v", "copy", "-map", "0:v:0",
+                    fileLocation,
+                ]
+
+            result = subprocess.run(cmd, capture_output=True)
 
             os.remove(tempVideoFileLocation)
-            os.remove(tempAudioFileLocation)
+            if tempAudioFileLocation is not None:
+                os.remove(tempAudioFileLocation)
+
+            if result.returncode != 0:
+                raise Exception(
+                    f"ffmpeg failed (exit {result.returncode}) saving {fileLocation}: "
+                    + result.stderr.decode(errors="replace")[:400]
+                )
         else:
             raise Exception("Method not supported")
 
