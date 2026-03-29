@@ -1388,7 +1388,15 @@ class Tapo:
                     "getUserID", {"system": {"get_user_id": "null"}}
                 )
                 if "user_id" in response:
-                    self.userID = response["user_id"]
+                    uid = response["user_id"]
+                    # Some camera firmware returns user_id as a string; the
+                    # port-8800 playback API requires it as a JSON integer.
+                    # Try to coerce to int; leave as-is if non-numeric (e.g. UUID).
+                    try:
+                        uid = int(uid)
+                    except (TypeError, ValueError):
+                        pass
+                    self.userID = uid
                     return self.userID
                 else:
                     raise Exception(
