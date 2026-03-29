@@ -1528,7 +1528,31 @@ class Tapo:
             )
             if "playback" not in result:
                 raise Exception("Video playback is not supported by this camera")
-            return result["playback"]["search_video_results"]
+            # Normalise to flat list — same logic as getRecordingsUTC
+            playback = result["playback"]
+            raw = (
+                playback.get("search_video_results")
+                or playback.get("search_results")
+                or []
+            )
+            clips = []
+            for entry in raw:
+                if not isinstance(entry, dict):
+                    continue
+                if "startTime" in entry:
+                    clips.append(entry)
+                    continue
+                if "start_time" in entry:
+                    clips.append({"startTime": entry["start_time"], "endTime": entry["end_time"]})
+                    continue
+                for v in entry.values():
+                    if isinstance(v, dict):
+                        if "startTime" in v:
+                            clips.append(v)
+                        elif "start_time" in v:
+                            clips.append({"startTime": v["start_time"], "endTime": v["end_time"]})
+                        break
+            return clips
         except Exception as err:
             self.logger.debugLog(
                 f"Encountered error when getting recordings for date {date}: {err}"
